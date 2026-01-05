@@ -33,7 +33,7 @@ from sklearn.metrics import (
     cohen_kappa_score,
     f1_score,
 )
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.utils.class_weight import compute_class_weight
 
 # Add project root to path
@@ -245,10 +245,25 @@ def train_final_model(X_train: np.ndarray, y_train: np.ndarray,
     print("TRAINING FINAL MODEL")
     print("="*60)
     
+    # Split training data for validation to avoid using test set
+    print("Splitting training data for validation (10%)...")
+    if sample_weights is not None:
+        X_train_split, X_val_split, y_train_split, y_val_split, weights_train, weights_val = train_test_split(
+            X_train, y_train, sample_weights,
+            test_size=0.1, random_state=RANDOM_STATE, stratify=y_train
+        )
+    else:
+        X_train_split, X_val_split, y_train_split, y_val_split = train_test_split(
+            X_train, y_train,
+            test_size=0.1, random_state=RANDOM_STATE, stratify=y_train
+        )
+        weights_train = None
+        weights_val = None
+    
     # Create datasets
-    train_data = lgb.Dataset(X_train, label=y_train, weight=sample_weights,
+    train_data = lgb.Dataset(X_train_split, label=y_train_split, weight=weights_train,
                              feature_name=feature_names)
-    val_data = lgb.Dataset(X_test, label=y_test, reference=train_data,
+    val_data = lgb.Dataset(X_val_split, label=y_val_split, reference=train_data, weight=weights_val,
                            feature_name=feature_names)
     
     # Train
@@ -258,7 +273,7 @@ def train_final_model(X_train: np.ndarray, y_train: np.ndarray,
         train_data,
         num_boost_round=params.get('n_estimators', 2000),
         valid_sets=[train_data, val_data],
-        valid_names=['train', 'test'],
+        valid_names=['train', 'valid'],
         callbacks=[
             lgb.early_stopping(50, verbose=True),
             lgb.log_evaluation(period=50)
@@ -268,11 +283,11 @@ def train_final_model(X_train: np.ndarray, y_train: np.ndarray,
     # Evaluate
     print("\n" + "-"*40)
     
-    # Train predictions
-    y_train_pred = np.argmax(model.predict(X_train), axis=1)
-    evaluate_model(y_train, y_train_pred, "Train")
+    # Train predictions (on the split used for training)
+    y_train_pred = np.argmax(model.predict(X_train_split), axis=1)
+    evaluate_model(y_train_split, y_train_pred, "Train (Split)")
     
-    # Test predictions
+    # Test predictions (on the held-out test set)
     y_test_pred = np.argmax(model.predict(X_test), axis=1)
     test_metrics = evaluate_model(y_test, y_test_pred, "Test")
     
